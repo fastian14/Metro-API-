@@ -4,7 +4,7 @@ using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Configure Serilog
+// ── Serilog ───────────────────────────────────────────────────────────────────
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .Enrich.FromLogContext()
@@ -14,16 +14,17 @@ Log.Logger = new LoggerConfiguration()
 
 builder.Host.UseSerilog();
 
-// Add services
+// ── MVC + Swagger ─────────────────────────────────────────────────────────────
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
     {
-        Title = "Metro API - SparsWeb Integration",
-        Version = "v1",
-        Description = "Metropolitan carrier API wrapper for SparsWeb. Exposes CreateOrder, GetOrderLabels, and GetOrderBOL endpoints."
+        Title       = "Metro API – SparsWeb Integration",
+        Version     = "v1",
+        Description = "Metropolitan carrier API wrapper for SparsWeb. " +
+                      "Exposes CreateOrder, GetOrderLabels, and GetOrderBOL endpoints."
     });
 
     var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
@@ -32,31 +33,37 @@ builder.Services.AddSwaggerGen(c =>
         c.IncludeXmlComments(xmlPath);
 });
 
-// Bind Metro API settings
+// ── Configuration ─────────────────────────────────────────────────────────────
 builder.Services.Configure<MetroApiSettings>(
     builder.Configuration.GetSection(MetroApiSettings.SectionName));
 
-// Read settings once for HttpClient configuration
 var metroSettings = builder.Configuration
     .GetSection(MetroApiSettings.SectionName)
     .Get<MetroApiSettings>()!;
 
-// Token service — singleton so the cached token is shared across all requests.
-// Uses a plain HttpClient (no base address) because it calls the absolute TokenUrl.
-builder.Services.AddHttpClient<IMetroTokenService, MetroTokenService>(client =>
+// ── Token service ─────────────────────────────────────────────────────────────
+// Named HttpClient used internally by MetroTokenService (no base address —
+// it calls the absolute TokenUrl). Registered separately from MetroService's
+// client so lifetimes are independent.
+builder.Services.AddHttpClient("MetroToken", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(metroSettings.TimeoutSeconds);
 });
+
+// Singleton: one instance per application lifetime so the cached bearer token
+// is shared across all requests. Uses IHttpClientFactory internally.
 builder.Services.AddSingleton<IMetroTokenService, MetroTokenService>();
 
-// MetroService — scoped; uses the shared token from MetroTokenService.
+// ── Metro order service ───────────────────────────────────────────────────────
+// Typed HttpClient registered as scoped (default for AddHttpClient).
 builder.Services.AddHttpClient<IMetroService, MetroService>(client =>
 {
     client.BaseAddress = new Uri(metroSettings.BaseUrl);
-    client.Timeout = TimeSpan.FromSeconds(metroSettings.TimeoutSeconds);
+    client.Timeout     = TimeSpan.FromSeconds(metroSettings.TimeoutSeconds);
     client.DefaultRequestHeaders.Add("Accept", "application/json");
 });
 
+// ── Build ─────────────────────────────────────────────────────────────────────
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -65,7 +72,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI(c =>
     {
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "Metro API v1");
-        c.RoutePrefix = string.Empty;
+        c.RoutePrefix = string.Empty; // Swagger UI at root "/"
     });
 }
 

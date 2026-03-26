@@ -23,7 +23,7 @@ namespace MetroAPI.Services;
 /// </summary>
 public sealed class MetroTokenService : IMetroTokenService, IDisposable
 {
-    private readonly HttpClient _http;
+    private readonly HttpClient _http;           // created once from the named factory
     private readonly MetroApiSettings _settings;
     private readonly ILogger<MetroTokenService> _logger;
 
@@ -38,11 +38,13 @@ public sealed class MetroTokenService : IMetroTokenService, IDisposable
     };
 
     public MetroTokenService(
-        HttpClient http,
+        IHttpClientFactory httpClientFactory,
         IOptions<MetroApiSettings> settings,
         ILogger<MetroTokenService> logger)
     {
-        _http     = http;
+        // Create one long-lived HttpClient from the named registration "MetroToken".
+        // Safe for singletons: IHttpClientFactory manages the underlying handler lifetime.
+        _http     = httpClientFactory.CreateClient("MetroToken");
         _settings = settings.Value;
         _logger   = logger;
     }
