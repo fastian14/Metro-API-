@@ -47,11 +47,11 @@ public class MetroApiSettings
     // ── Endpoint paths (relative to BaseUrl) ─────────────────────────────────
 
     /// <summary>Relative path for the CreateOrder endpoint.</summary>
-    public string CreateOrderPath { get; set; } = "/order/create";
+    public string CreateOrderPath { get; set; } = "/order/CreateOrder";
 
     /// <summary>Relative path for the GetOrderLabels endpoint.</summary>
-    public string GetOrderLabelsPath { get; set; } = "/order/labels";
+    public string GetOrderLabelsPath { get; set; } = "/order/GetOrderLabels";
 
     /// <summary>Relative path for the GetOrderBOL endpoint.</summary>
-    public string GetOrderBOLPath { get; set; } = "/order/bol";
+    public string GetOrderBOLPath { get; set; } = "/order/GetOrderBOL";
 }
