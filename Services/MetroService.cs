@@ -54,13 +54,9 @@ public class MetroService : IMetroService
         CreateOrderRequest request,
         CancellationToken ct = default)
     {
-        // Fall back to the configured account number when the caller omits it
-        if (string.IsNullOrWhiteSpace(request.AccountNumber))
-            request.AccountNumber = _settings.AccountNumber;
-
         _logger.LogInformation(
-            "CreateOrder → Account={Account} Reference={Ref} Pieces={Pieces}",
-            request.AccountNumber, request.ReferenceNumber, request.Pieces.Count);
+            "CreateOrder → ClientRef1={Ref} Origin={Origin} Items={Items}",
+            request.ClientRef1, request.OriginCompany, request.Item?.Count ?? 0);
 
         // Map our SparsWeb request model to the Metro API contract
         var metroPayload = BuildCreateOrderPayload(request);
@@ -207,56 +203,103 @@ public class MetroService : IMetroService
 
     // ── Payload builders ──────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Wraps the order in Metro's required envelope: { "asnOrder": [ { ...order fields... } ] }
+    /// Field names match the Metro API contract exactly (including non-standard casing).
+    /// </summary>
     private static object BuildCreateOrderPayload(CreateOrderRequest r) => new
     {
-        accountNumber   = r.AccountNumber,
-        serviceType     = r.ServiceType,
-        referenceNumber = r.ReferenceNumber,
-        purchaseOrderNumber = r.PurchaseOrderNumber,
-        specialInstructions = r.SpecialInstructions,
-        pickupDate      = r.PickupDate?.ToString("yyyy-MM-dd"),
-        isResidential   = r.IsResidential,
-        liftGateRequired = r.LiftGateRequired,
-        insideDelivery  = r.InsideDelivery,
-        shipper = new
+        asnOrder = new[]
         {
-            name         = r.Shipper.Name,
-            address1     = r.Shipper.Address1,
-            address2     = r.Shipper.Address2,
-            city         = r.Shipper.City,
-            state        = r.Shipper.State,
-            zip          = r.Shipper.Zip,
-            country      = r.Shipper.Country,
-            phone        = r.Shipper.Phone,
-            contactName  = r.Shipper.ContactName
-        },
-        consignee = new
-        {
-            name         = r.Consignee.Name,
-            address1     = r.Consignee.Address1,
-            address2     = r.Consignee.Address2,
-            city         = r.Consignee.City,
-            state        = r.Consignee.State,
-            zip          = r.Consignee.Zip,
-            country      = r.Consignee.Country,
-            phone        = r.Consignee.Phone,
-            contactName  = r.Consignee.ContactName,
-            email        = r.Consignee.Email
-        },
-        pieces = r.Pieces.Select((p, i) => new
-        {
-            sequenceNumber  = p.SequenceNumber > 0 ? p.SequenceNumber : i + 1,
-            description     = p.Description,
-            freightClass    = p.FreightClass,
-            weightLbs       = p.WeightLbs,
-            lengthIn        = p.LengthIn,
-            widthIn         = p.WidthIn,
-            heightIn        = p.HeightIn,
-            quantity        = p.Quantity,
-            unitType        = p.UnitType,
-            declaredValue   = p.DeclaredValue,
-            isHazmat        = p.IsHazmat
-        }).ToList()
+            new
+            {
+                clientKey                  = r.ClientKey                  ?? "",
+                originCompany              = r.OriginCompany              ?? "",
+                originAddress              = r.OriginAddress              ?? "",
+                originAddress2             = r.OriginAddress2             ?? "",
+                originZip                  = r.OriginZip                  ?? "",
+                originState                = r.OriginState                ?? "",
+                originCity                 = r.OriginCity                 ?? "",
+                originCountry              = r.OriginCountry              ?? "US",
+                originContactPerson        = r.OriginContactPerson        ?? "",
+                originEmail                = r.OriginEmail                ?? "",
+                originPhone                = r.OriginPhone                ?? "",
+                originExt                  = r.OriginExt                  ?? "",
+                originIsMilitaryBase       = r.OriginIsMilitaryBase       ?? "0",
+                destinationFirstName       = r.DestinationFirstName       ?? "",
+                destinationLastName        = r.DestinationLastName        ?? "",
+                destinationCompany         = r.DestinationCompany         ?? "",
+                destinationAddress         = r.DestinationAddress         ?? "",
+                destinationAddress2        = r.DestinationAddress2        ?? "",
+                destinationZip             = r.DestinationZip             ?? "",
+                destinationState           = r.DestinationState           ?? "",
+                destinationCity            = r.DestinationCity            ?? "",
+                destinationCountry         = r.DestinationCountry         ?? "US",
+                destinationContactPerson   = r.DestinationContactPerson   ?? "",
+                destinationEmail           = r.DestinationEmail           ?? "",
+                destinationPhone           = r.DestinationPhone           ?? "",
+                destinationExt             = r.DestinationExt             ?? "",
+                destinationMobile          = r.DestinationMobile          ?? "",
+                destinationIsMilitaryBase  = r.DestinationIsMilitaryBase  ?? "0",
+                carrierName                = r.CarrierName                ?? "",
+                carrierPRO                 = r.CarrierPRO                 ?? "",
+                tag                        = r.Tag                        ?? "",
+                clientRef1                 = r.ClientRef1                 ?? "",
+                clientRef2                 = r.ClientRef2                 ?? "",
+                typeofpickup               = r.TypeOfPickup               ?? "",
+                pickupDate                 = r.PickupDate                 ?? "",
+                operatingHoursFrom         = r.OperatingHoursFrom         ?? "",
+                operatingHoursTo           = r.OperatingHoursTo           ?? "",
+                deliverByDate              = r.DeliverByDate              ?? "",
+                typeofDelivery             = r.TypeOfDelivery             ?? "",
+                deliveryoperatingHoursFrom = r.DeliveryOperatingHoursFrom ?? "",
+                deliveryoperatingHoursTo   = r.DeliveryOperatingHoursTo   ?? "",
+                itemstoShip                = r.ItemsToShip                ?? "",
+                specialInstruction         = r.SpecialInstruction         ?? "",
+                pickupInstruction          = r.PickupInstruction          ?? "",
+                priority                   = r.Priority                   ?? "",
+                quoteID                    = r.QuoteID                    ?? "",
+                quoteAmount                = r.QuoteAmount                ?? "",
+                tariffID                   = r.TariffID                   ?? "",
+                additionalOrderParams      = r.AdditionalOrderParams      ?? new List<object>(),
+                freightCollect             = r.FreightCollect             ?? "0",
+                freightBillingInfo         = BuildFreightBillingPayload(r.FreightBillingInfo),
+                item = (r.Item ?? new List<OrderItem>()).Select(i => new
+                {
+                    type                 = i.Type                 ?? "",
+                    pkgQty               = i.PkgQty               ?? "",
+                    itemDescription      = i.ItemDescription      ?? "",
+                    skuNo                = i.SkuNo                ?? "",
+                    clientItemRef        = i.ClientItemRef        ?? "",
+                    additionalItemRef    = i.AdditionalItemRef    ?? "",
+                    packedbyShipper      = i.PackedByShipper      ?? "",
+                    weight               = i.Weight               ?? "",
+                    value                = i.Value                ?? "",
+                    dim_Length           = i.DimLength            ?? "",
+                    dim_Width            = i.DimWidth             ?? "",
+                    dim_Height           = i.DimHeight            ?? "",
+                    assemblyTime         = i.AssemblyTime         ?? "",
+                    additionalItemParams = i.AdditionalItemParams ?? new List<object>()
+                }).ToList()
+            }
+        }
+    };
+
+    private static object BuildFreightBillingPayload(FreightBillingInfo? f) => new
+    {
+        thirdPartyBillTo = f?.ThirdPartyBillTo ?? "",
+        contactPerson    = f?.ContactPerson    ?? "",
+        company          = f?.Company          ?? "",
+        address1         = f?.Address1         ?? "",
+        address2         = f?.Address2         ?? "",
+        zip              = f?.Zip              ?? "",
+        city             = f?.City             ?? "",
+        state            = f?.State            ?? "",
+        country          = f?.Country          ?? "US",
+        email            = f?.Email            ?? "",
+        phone            = f?.Phone            ?? "",
+        ext              = f?.Ext              ?? "",
+        mobile           = f?.Mobile           ?? ""
     };
 
     // ── Response mappers ──────────────────────────────────────────────────────
