@@ -11,7 +11,10 @@ namespace MetroAPI.Services;
 /// <summary>
 /// Concrete implementation that calls the Metropolitan carrier REST API.
 ///
-/// Authentication: The Metro API key is sent as a Bearer token on every request.
+/// Authentication: Before every request <see cref="IMetroTokenService"/> is asked
+/// for a valid bearer token (fetched/refreshed transparently). The token is then
+/// set on a per-request <see cref="HttpRequestMessage"/> so that concurrent calls
+/// never overwrite each other's Authorization header.
 ///
 /// Error handling: Any non-2xx response from Metro is deserialized into a
 /// <see cref="MetroErrorResponse"/> and re-thrown as an <see cref="MetroApiException"/>,
@@ -21,6 +24,7 @@ public class MetroService : IMetroService
 {
     private readonly HttpClient _http;
     private readonly MetroApiSettings _settings;
+    private readonly IMetroTokenService _tokenService;
     private readonly ILogger<MetroService> _logger;
 
     private static readonly JsonSerializerOptions _jsonOptions = new()
@@ -32,15 +36,13 @@ public class MetroService : IMetroService
     public MetroService(
         HttpClient http,
         IOptions<MetroApiSettings> settings,
+        IMetroTokenService tokenService,
         ILogger<MetroService> logger)
     {
-        _http = http;
-        _settings = settings.Value;
-        _logger = logger;
-
-        // Set Bearer token once; it applies to every request made through this client
-        _http.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", _settings.ApiKey);
+        _http         = http;
+        _settings     = settings.Value;
+        _tokenService = tokenService;
+        _logger       = logger;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -126,19 +128,33 @@ public class MetroService : IMetroService
     // ─────────────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Serializes <paramref name="payload"/> as JSON, POSTs to <paramref name="path"/>,
-    /// reads the Metro JSON response, and deserializes it to <typeparamref name="T"/>.
-    /// Throws <see cref="MetroApiException"/> on any non-2xx status.
+    /// Serializes <paramref name="payload"/> as JSON, POSTs to <paramref name="path"/>
+    /// with a fresh bearer token, reads the Metro JSON response, and deserializes it to
+    /// <typeparamref name="T"/>. Throws <see cref="MetroApiException"/> on any non-2xx status.
+    ///
+    /// Token is attached per-<see cref="HttpRequestMessage"/> (not on the shared
+    /// <see cref="HttpClient"/> default headers) to keep concurrent requests safe.
     /// </summary>
     private async Task<T> PostAsync<T>(string path, object payload, CancellationToken ct)
     {
+        // Obtain a valid bearer token (cached by MetroTokenService)
+        var token = await _tokenService.GetAccessTokenAsync(ct);
+
         var json    = JsonSerializer.Serialize(payload, _jsonOptions);
         var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        // Build an explicit HttpRequestMessage so we can set per-request auth header
+        using var requestMessage = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = content
+        };
+        requestMessage.Headers.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
 
         HttpResponseMessage httpResponse;
         try
         {
-            httpResponse = await _http.PostAsync(path, content, ct);
+            httpResponse = await _http.SendAsync(requestMessage, ct);
         }
         catch (HttpRequestException ex)
         {

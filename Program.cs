@@ -36,19 +36,26 @@ builder.Services.AddSwaggerGen(c =>
 builder.Services.Configure<MetroApiSettings>(
     builder.Configuration.GetSection(MetroApiSettings.SectionName));
 
-// Register HttpClient for MetroService with base address and timeout
+// Read settings once for HttpClient configuration
+var metroSettings = builder.Configuration
+    .GetSection(MetroApiSettings.SectionName)
+    .Get<MetroApiSettings>()!;
+
+// Token service — singleton so the cached token is shared across all requests.
+// Uses a plain HttpClient (no base address) because it calls the absolute TokenUrl.
+builder.Services.AddHttpClient<IMetroTokenService, MetroTokenService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(metroSettings.TimeoutSeconds);
+});
+builder.Services.AddSingleton<IMetroTokenService, MetroTokenService>();
+
+// MetroService — scoped; uses the shared token from MetroTokenService.
 builder.Services.AddHttpClient<IMetroService, MetroService>(client =>
 {
-    var settings = builder.Configuration
-        .GetSection(MetroApiSettings.SectionName)
-        .Get<MetroApiSettings>()!;
-
-    client.BaseAddress = new Uri(settings.BaseUrl);
-    client.Timeout = TimeSpan.FromSeconds(settings.TimeoutSeconds);
+    client.BaseAddress = new Uri(metroSettings.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(metroSettings.TimeoutSeconds);
     client.DefaultRequestHeaders.Add("Accept", "application/json");
 });
-
-builder.Services.AddScoped<IMetroService, MetroService>();
 
 var app = builder.Build();
 
