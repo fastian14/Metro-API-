@@ -61,10 +61,23 @@ public class MetroService : IMetroService
         // Map our SparsWeb request model to the Metro API contract
         var metroPayload = BuildCreateOrderPayload(request);
 
-        var response = await PostAsync<MetroCreateOrderResponse>(
+        // Metro wraps all responses in { status, message, result: { asnOrder: [...] } }
+        var apiResponse = await PostAsync<MetroCreateOrderApiResponse>(
             _settings.CreateOrderPath, metroPayload, ct);
 
-        return MapCreateOrderResponse(response);
+        if (!string.Equals(apiResponse.Status, "Success", StringComparison.OrdinalIgnoreCase))
+            throw new MetroApiException("ORDER_FAILED",
+                apiResponse.Message ?? "Metro rejected the order.");
+
+        var order = apiResponse.Result?.AsnOrder?.FirstOrDefault()
+            ?? throw new MetroApiException("EMPTY_RESPONSE",
+                "Metro returned no order data in the response.");
+
+        _logger.LogInformation(
+            "CreateOrder succeeded → TrackingNumber={Tracking} PON={Pon} TotalQty={Qty}",
+            order.TrackingNumber, order.Pon, order.TotalQty);
+
+        return MapCreateOrderResponse(apiResponse.Status!, apiResponse.Message, order);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -304,31 +317,61 @@ public class MetroService : IMetroService
 
     // ── Response mappers ──────────────────────────────────────────────────────
 
-    private static CreateOrderResponse MapCreateOrderResponse(MetroCreateOrderResponse m) => new()
+    private static CreateOrderResponse MapCreateOrderResponse(
+        string status, string? message, MetroCreateOrderOrder o) => new()
     {
-        TrackingNumber      = m.TrackingNumber,
-        OrderNumber         = m.OrderNumber,
-        ReferenceNumber     = m.ReferenceNumber,
-        MasterBarcodeBase64 = m.MasterBarcodeBase64,
-        MasterBarcodeValue  = m.MasterBarcodeValue,
-        TotalWeightLbs      = m.TotalWeightLbs,
-        TotalPieces         = m.TotalPieces,
-        EstimatedCharges    = m.EstimatedCharges,
-        EstimatedDeliveryDate = m.EstimatedDeliveryDate,
-        OrderCreatedAtUtc   = m.OrderCreatedAtUtc,
-        ServiceDescription  = m.ServiceDescription,
-        Messages            = m.Messages ?? new List<string>(),
-        Pieces = (m.Pieces ?? new List<MetroPieceDetail>()).Select(p => new PieceDetail
+        Status                = status,
+        Message               = message,
+        TrackingNumber        = o.TrackingNumber   ?? string.Empty,
+        Pon                   = o.Pon,
+        BillTo                = o.BillTo,
+        OriginHub             = o.OriginHub,
+        OriginHubZip          = o.OriginHubZip,
+        DestinationHub        = o.DestinationHub,
+        DestinationHubZip     = o.DestinationHubZip,
+        OriginCompany         = o.OriginCompany,
+        OriginContactPerson   = o.OriginContactPerson,
+        OriginAddress         = o.OriginAddress,
+        OriginAddress2        = o.OriginAddress2,
+        OriginZip             = o.OriginZip,
+        OriginState           = o.OriginState,
+        OriginCity            = o.OriginCity,
+        OriginCountry         = o.OriginCountry,
+        OriginPhone           = o.OriginPhone,
+        OriginExt             = o.OriginExt,
+        DestinationCompany    = o.DestinationCompany,
+        DestinationName       = o.DestinationName,
+        DestinationAddress    = o.DestinationAddress,
+        DestinationAddress2   = o.DestinationAddress2,
+        DestinationZip        = o.DestinationZip,
+        DestinationState      = o.DestinationState,
+        DestinationCity       = o.DestinationCity,
+        DestinationCountry    = o.DestinationCountry,
+        DestinationContactPerson = o.DestinationContactPerson,
+        DestinationPhone      = o.DestinationPhone,
+        DestinationExt        = o.DestinationExt,
+        CarrierName           = o.CarrierName,
+        CarrierPRO            = o.CarrierPRO,
+        Tag                   = o.Tag,
+        ClientRef1            = o.ClientRef1,
+        ClientRef2            = o.ClientRef2,
+        TypeOfDelivery        = o.TypeofDelivery,
+        PickupScheduleType    = o.PickupScheduleType,
+        DeliveryScheduleType  = o.DeliveryScheduleType,
+        SpecialInstruction    = o.SpecialInstruction,
+        ServiceInstruction    = o.ServiceInstruction,
+        TotalQty              = o.TotalQty,
+        Item = (o.Item ?? new List<MetroPieceDetail>()).Select(p => new OrderItemResult
         {
-            SequenceNumber      = p.SequenceNumber,
-            PieceBarcode        = p.PieceBarcode,
-            PieceBarcodeBase64  = p.PieceBarcodeBase64,
-            Description         = p.Description,
-            WeightLbs           = p.WeightLbs,
-            FreightClass        = p.FreightClass,
-            Quantity            = p.Quantity,
-            UnitType            = p.UnitType,
-            Dimensions          = p.Dimensions
+            PieceNum        = p.PieceNum,
+            Barcode         = p.Barcode,
+            ItemDescription = p.ItemDescription,
+            SkuNo           = p.SkuNo,
+            PackedByShipper = p.PackedByShipper,
+            Weight          = p.Weight,
+            DimLength       = p.DimLength,
+            DimWidth        = p.DimWidth,
+            DimHeight       = p.DimHeight
         }).ToList()
     };
 
@@ -367,35 +410,83 @@ public class MetroService : IMetroService
 // Internal Metro API contract types (not exposed outside this file)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// <summary>Raw response shape returned by Metro's CreateOrder endpoint.</summary>
-file class MetroCreateOrderResponse
+/// <summary>
+/// Top-level envelope returned by Metro's CreateOrder endpoint:
+/// { "status": "Success", "message": "...", "result": { "asnOrder": [...] } }
+/// </summary>
+file class MetroCreateOrderApiResponse
 {
-    public string TrackingNumber { get; set; } = string.Empty;
-    public string OrderNumber { get; set; } = string.Empty;
-    public string? ReferenceNumber { get; set; }
-    public string? MasterBarcodeBase64 { get; set; }
-    public string? MasterBarcodeValue { get; set; }
-    public decimal TotalWeightLbs { get; set; }
-    public int TotalPieces { get; set; }
-    public decimal? EstimatedCharges { get; set; }
-    public DateTime? EstimatedDeliveryDate { get; set; }
-    public DateTime OrderCreatedAtUtc { get; set; }
-    public string? ServiceDescription { get; set; }
-    public List<string>? Messages { get; set; }
-    public List<MetroPieceDetail>? Pieces { get; set; }
+    public string? Status { get; set; }
+    public string? Message { get; set; }
+    public MetroCreateOrderResult? Result { get; set; }
+}
+
+file class MetroCreateOrderResult
+{
+    public List<MetroCreateOrderOrder>? AsnOrder { get; set; }
+}
+
+/// <summary>Single order object inside result.asnOrder[].</summary>
+file class MetroCreateOrderOrder
+{
+    public string? TrackingNumber { get; set; }
+    public string? Pon { get; set; }
+    public string? BillTo { get; set; }
+    public string? OriginHub { get; set; }
+    public string? OriginHubZip { get; set; }
+    public string? DestinationHub { get; set; }
+    public string? DestinationHubZip { get; set; }
+    public string? OriginCompany { get; set; }
+    public string? OriginContactPerson { get; set; }
+    public string? OriginAddress { get; set; }
+    public string? OriginAddress2 { get; set; }
+    public string? OriginZip { get; set; }
+    public string? OriginState { get; set; }
+    public string? OriginCity { get; set; }
+    public string? OriginCountry { get; set; }
+    public string? OriginPhone { get; set; }
+    public string? OriginExt { get; set; }
+    public string? DestinationCompany { get; set; }
+    public string? DestinationName { get; set; }
+    public string? DestinationAddress { get; set; }
+    public string? DestinationAddress2 { get; set; }
+    public string? DestinationZip { get; set; }
+    public string? DestinationState { get; set; }
+    public string? DestinationCity { get; set; }
+    public string? DestinationCountry { get; set; }
+    public string? DestinationContactPerson { get; set; }
+    public string? DestinationPhone { get; set; }
+    public string? DestinationExt { get; set; }
+    public string? CarrierName { get; set; }
+    public string? CarrierPRO { get; set; }
+    public string? Tag { get; set; }
+    public string? ClientRef1 { get; set; }
+    public string? ClientRef2 { get; set; }
+    /// <summary>Metro returns this as "typeofDelivery" (lowercase 'of').</summary>
+    public string? TypeofDelivery { get; set; }
+    public string? PickupScheduleType { get; set; }
+    public string? DeliveryScheduleType { get; set; }
+    public string? SpecialInstruction { get; set; }
+    public string? ServiceInstruction { get; set; }
+    public string? TotalQty { get; set; }
+    public List<MetroPieceDetail>? Item { get; set; }
 }
 
 file class MetroPieceDetail
 {
-    public int SequenceNumber { get; set; }
-    public string PieceBarcode { get; set; } = string.Empty;
-    public string? PieceBarcodeBase64 { get; set; }
-    public string Description { get; set; } = string.Empty;
-    public decimal WeightLbs { get; set; }
-    public string? FreightClass { get; set; }
-    public int Quantity { get; set; }
-    public string UnitType { get; set; } = string.Empty;
-    public string? Dimensions { get; set; }
+    public string? PieceNum { get; set; }
+    public string? Barcode { get; set; }
+    public string? ItemDescription { get; set; }
+    /// <summary>Metro returns "skuno" (no capital N); case-insensitive binding handles it.</summary>
+    public string? SkuNo { get; set; }
+    public string? PackedByShipper { get; set; }
+    public string? Weight { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("dim_Length")]
+    public string? DimLength { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("dim_Width")]
+    public string? DimWidth { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("dim_Height")]
+    public string? DimHeight { get; set; }
 }
 
 file class MetroGetLabelsResponse
